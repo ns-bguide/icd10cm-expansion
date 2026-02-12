@@ -150,8 +150,10 @@ def emit_rows(
 
     output: List[Tuple[str, str]] = []
 
-    official = icd_row.long_desc
-    official_abbr = icd_row.short_desc
+    # Output is intentionally all-lowercase so downstream consumers can treat
+    # it as case-insensitive.
+    official = (icd_row.long_desc or "").strip().lower()
+    official_abbr = (icd_row.short_desc or "").strip().lower()
 
     output.append((official, "official"))
     if include_official_abbr and official_abbr and official_abbr != official:
@@ -177,7 +179,7 @@ def emit_rows(
     seen_term: Set[str] = set()
     deduped: List[Tuple[str, str]] = []
     for term, ty in output:
-        term = term.strip()
+        term = term.strip().lower()
         if not term or term in seen_term:
             continue
         seen_term.add(term)

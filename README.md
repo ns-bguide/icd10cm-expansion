@@ -33,6 +33,9 @@ CSV columns:
 - `canonical:official`, `canonical:official+abbr` (canonicalized variants)
 - `enriched:<ruleId>` (additional variants created by rules; e.g. `enriched:A1`)
 
+**Casing:** all emitted `Term` values are lowercased. This makes the final output
+case-insensitive by construction.
+
 ## Quick start (Windows)
 
 From this folder:
@@ -78,6 +81,10 @@ Canonical terms are produced by:
 
 Canonicalization runs on the official and (optionally) official+abbr terms.
 
+Note: because the pipeline also lowercases the `official` / `official+abbr` terms,
+the canonical form often becomes identical to the base term. The script de-dupes
+terms per ICD code, so canonical rows may be omitted when they would be duplicates.
+
 ## Enrichment rules (how to add new ones)
 
 Rules are defined in `ENRICHMENT_RULES` in [icd10cm_rules.py](icd10cm_rules.py).
@@ -97,6 +104,12 @@ Guidelines:
 
 ### Existing rules
 
+**P rules (parentheses)**
+- `P1`: parentheses split. If a term contains `( ... )`, generate:
+	- the original term (lowercased)
+	- the term with all parenthetical content removed
+	- the parenthetical content alone
+
 **A rules (simple modifications)**
 - `A1`: replace hyphens with spaces (e.g. `b-cell` → `b cell`)
 - `A2`: remove hyphens (e.g. `b-cell` → `bcell`)
@@ -109,6 +122,10 @@ Guidelines:
 - `B2`: `chronic` ↔ `chr`
 - `B3`: `acute` ↔ `acu`
 - `B4`: `left/right` ↔ `lt/rt`
+
+**C rules (phrase normalization)**
+- `C1`: `due to` → `because of` and `caused by`
+- `C2`: move the suffix `, unspecified` to a prefix `unspecified ...`
 
 ### Adding a new abbreviation rule (example)
 
@@ -139,6 +156,17 @@ Disable the report with:
 python .\icd10cm_pipeline.py --no-rule-report
 ```
 
+### Quick verification
+
+After running the pipeline, you can quickly check that a rule is generating rows by:
+
+1) Looking at the console counts for `enriched:<ruleId>` (example: `enriched:P1`)
+2) Grepping the output CSV for that `Type` value (example):
+
+```bash
+grep -m 5 ',enriched:P1$' icd10cm_terms_2026.csv
+```
+
 ## Seeing results
 
 There are two places to look:
@@ -161,4 +189,5 @@ There are two places to look:
 ## Troubleshooting
 
 - If output terms look duplicated, remember the script de-dupes terms **per code**, keeping the first provenance encountered.
+- If you expected lots of `canonical:*` rows: when base terms are already canonical after lowercasing, canonical rows collapse into `official` / `official+abbr` and are removed by the per-code de-dupe.
 - If you need a different de-dup policy (e.g. keep all provenances for the same term), that’s an easy tweak.

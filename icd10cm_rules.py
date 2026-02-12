@@ -101,6 +101,40 @@ def _regex_sub_rule(pattern: str, replacement: str) -> Callable[[str], Iterable[
     return _apply
 
 
+def _rule_parentheses_split(term: str) -> Iterable[str]:
+        """Split parenthetical content into separate variants.
+
+        If the term contains parentheses, yield up to three candidates:
+            a) the original term (lowercased)
+            b) the term with all '(...)' segments removed
+            c) just the content inside parentheses (all groups joined with spaces)
+
+        Notes:
+        - The pipeline passes canonical terms to rules, so `term` is usually already
+            lowercased; yielding (a) is harmless (it may de-dupe).
+        - Nested parentheses are not expected in ICD terms; this handles simple
+            non-nested '(...)' groups.
+        """
+
+        if "(" not in term or ")" not in term:
+                return []
+
+        groups = [m.group(1).strip() for m in re.finditer(r"\(([^()]*)\)", term)]
+        if not groups:
+                return []
+
+        without = re.sub(r"\([^()]*\)", " ", term)
+        without = normalize_spaces(without)
+        only = normalize_spaces(" ".join(g for g in groups if g))
+
+        out: List[str] = [term.lower()]
+        if without:
+                out.append(without)
+        if only:
+                out.append(only)
+        return out
+
+
 def _rule_due_to_variants(term: str) -> Iterable[str]:
     rx = re.compile(r"\bdue\s+to\b")
     if not rx.search(term):
@@ -125,6 +159,7 @@ def _rule_unspecified_suffix_to_prefix(term: str) -> Iterable[str]:
 
 # Add/edit rules here.
 ENRICHMENT_RULES: Sequence[EnrichmentRule] = (
+    EnrichmentRule("P1", "Parentheses split", _rule_parentheses_split),
     EnrichmentRule("A1", "Replace hyphens with spaces", _rule_hyphen_to_space),
     EnrichmentRule("A2", "Remove hyphens", _rule_hyphen_remove),
     EnrichmentRule("A3", "Remove apostrophes", _rule_remove_apostrophes),
@@ -148,6 +183,7 @@ ENRICHMENT_RULES: Sequence[EnrichmentRule] = (
 
 RULE_DESCRIPTIONS: Dict[str, str] = {
     # Keep one canonical description per rule id for reporting.
+    "P1": "Parentheses split: original / no-parens / parens-only",
     "A1": "Replace hyphens with spaces",
     "A2": "Remove hyphens",
     "A3": "Remove apostrophes",
