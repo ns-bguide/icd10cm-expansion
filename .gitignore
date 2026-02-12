@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Generated outputs (keep inputs tracked)
+# Default pipeline output
+icd10cm_terms_*.csv
+official_only.csv
+
+# Ad-hoc / test outputs
+*_test*.csv
+
+# Temporary files
+/tmp/
