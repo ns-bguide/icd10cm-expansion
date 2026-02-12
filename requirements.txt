@@ -1,0 +1,2 @@
+# This project currently uses only the Python standard library.
+# Keep this file so the project is easy to share / package.
