@@ -36,6 +36,10 @@ CSV columns:
 **Casing:** all emitted `Term` values are lowercased. This makes the final output
 case-insensitive by construction.
 
+**CSV quoting:** the pipeline writes CSV with consistent quoting (all fields
+wrapped in quotes). This is expected; use a CSV parser (not string-splitting)
+when reading the file.
+
 ## Quick start (Windows)
 
 From this folder:
@@ -125,7 +129,10 @@ Guidelines:
 
 **C rules (phrase normalization)**
 - `C1`: `due to` → `because of` and `caused by`
-- `C2`: move the suffix `, unspecified` to a prefix `unspecified ...`
+- `C2`: move the suffix `, unspecified` to a prefix `unspecified ...` (focused on multi-word phrases)
+
+**D rules (range expansion)**
+- `D1`: expand `stage 1 through stage 4` into `stage 1`, `stage 2`, `stage 3`, `stage 4`
 
 ### Adding a new abbreviation rule (example)
 
@@ -181,6 +188,19 @@ There are two places to look:
 - Row counts by `Type`
 - (Optional) the per-rule enrichment report (`terms_affected` and `variants_added`)
 
+3) **Review file (single-word ', unspecified')**
+
+The pipeline also writes `unspecified_single_word_review.csv` by default. This file lists cases like
+`"anthrax, unspecified"` where the stem is a single word and may need manual decision. If the same
+term appears in multiple inputs (e.g. official vs official+abbr), the review file aggregates them
+into a single row with a `Sources` column.
+
+Disable it with:
+
+```powershell
+python .\icd10cm_pipeline.py --no-unspecified-review
+```
+
 ## Notes / sharing
 
 - Dependencies: none (stdlib only). See [requirements.txt](requirements.txt).
@@ -189,5 +209,6 @@ There are two places to look:
 ## Troubleshooting
 
 - If output terms look duplicated, remember the script de-dupes terms **per code**, keeping the first provenance encountered.
+- As a final safeguard, the writer also de-dupes across the entire output file on `(ICD10CMCode, Term)`.
 - If you expected lots of `canonical:*` rows: when base terms are already canonical after lowercasing, canonical rows collapse into `official` / `official+abbr` and are removed by the per-code de-dupe.
 - If you need a different de-dup policy (e.g. keep all provenances for the same term), that’s an easy tweak.

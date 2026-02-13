@@ -231,6 +231,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Disable per-rule enrichment report printing",
     )
+    parser.add_argument(
+        "--no-unspecified-review",
+        action="store_true",
+        help="Disable generating a review CSV for single-word ', unspecified' terms",
+    )
+    parser.add_argument(
+        "--unspecified-review-output",
+        default="unspecified_single_word_review.csv",
+        help=(
+            "CSV path for review cases where a term ends with ', unspecified' and the stem is a single word "
+            "(default: unspecified_single_word_review.csv)"
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -249,14 +262,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not args.no_enriched:
         enrichment_stats = EnrichmentStats()
 
+    # Review cases: terms ending with ', unspecified' where the stem is a single word.
+    # Keyed by (code, term) and aggregates all sources that produced that term.
+    review_map: dict[Tuple[str, str], Tuple[str, Set[str]]] = {}
+    review_suffix = ", unspecified"
+
+    # Final safeguard: de-dupe across the entire output file.
+    # Keyed by (code, term) and keeps the first provenance encountered.
+    global_seen: Set[Tuple[str, str]] = set()
+
+    def add_unspecified_review(code: str, term: str, source: str) -> None:
+        t = _normalize_spaces((term or "").strip().lower())
+        if not t.endswith(review_suffix):
+            return
+        stem = _normalize_spaces(t[: -len(review_suffix)].rstrip().rstrip(",").strip())
+        if not stem:
+            return
+        if len(stem.split()) == 1:
+            key = (code, t)
+            existing = review_map.get(key)
+            if existing is None:
+                review_map[key] = (stem, {source})
+            else:
+                existing_stem, sources = existing
+                # Prefer the first stem we saw; they should match.
+                sources.add(source)
+
     with output_path.open("w", newline="", encoding="utf-8") as out_f:
-        writer = csv.writer(out_f)
+        writer = csv.writer(out_f, quoting=csv.QUOTE_ALL)
         writer.writerow(["ICD10CMCode", "Term", "Type"])
 
         for row in iter_rows(input_path):
             parsed_rows += 1
             if args.leaf_only and row.flag != 1:
                 continue
+
+            if not args.no_unspecified_review:
+                add_unspecified_review(row.code, row.long_desc, "official")
+                if args.include_official_abbr:
+                    add_unspecified_review(row.code, row.short_desc, "official+abbr")
 
             emitted = emit_rows(
                 row,
@@ -267,6 +311,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 enrichment_stats=enrichment_stats,
             )
             for term, ty in emitted:
+                key = (row.code, term)
+                if key in global_seen:
+                    continue
+                global_seen.add(key)
                 writer.writerow([row.code, term, ty])
                 counts[ty] += 1
                 written_rows += 1
@@ -297,6 +345,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"  {rule_id:<3} terms_affected={affected:<6} variants_added={added:<6} {desc}")
             else:
                 print(f"  {rule_id:<3} terms_affected={affected:<6} variants_added={added:<6}")
+
+    if not args.no_unspecified_review:
+        review_out = Path(str(args.unspecified_review_output))
+        if review_map:
+            with review_out.open("w", newline="", encoding="utf-8") as rf:
+                rw = csv.writer(rf, quoting=csv.QUOTE_ALL)
+                rw.writerow(["ICD10CMCode", "Term", "Stem", "Sources"])
+                # Deterministic ordering for easier diffs.
+                for (code, term) in sorted(review_map.keys()):
+                    stem, sources = review_map[(code, term)]
+                    rw.writerow([code, term, stem, "|".join(sorted(sources))])
+            print(f"\nReview file written: {review_out} (rows: {len(review_map)})")
+        else:
+            print("\nNo single-word ', unspecified' review cases found.")
 
     return 0
 

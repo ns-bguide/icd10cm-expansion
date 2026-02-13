@@ -19,6 +19,9 @@ venv/
 icd10cm_terms_*.csv
 official_only.csv
 
+# Review / diagnostic outputs
+*_review*.csv
+
 # Ad-hoc / test outputs
 *_test*.csv
 

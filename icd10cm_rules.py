@@ -117,21 +117,77 @@ def _rule_parentheses_split(term: str) -> Iterable[str]:
         """
 
         if "(" not in term or ")" not in term:
-                return []
-
-        groups = [m.group(1).strip() for m in re.finditer(r"\(([^()]*)\)", term)]
-        if not groups:
-                return []
-
-        without = re.sub(r"\([^()]*\)", " ", term)
-        without = normalize_spaces(without)
-        only = normalize_spaces(" ".join(g for g in groups if g))
+            return []
 
         out: List[str] = [term.lower()]
+
+        # Special case: optional suffix like "tube(s)" -> "tube" and "tubes".
+        # Treat these as morphology hints, not as standalone parenthetical content.
+        def _optional_suffix_variants(s: str) -> Iterable[str]:
+            # (s) / (es)
+            for m in re.finditer(r"([a-z]+)\((s|es)\)", s):
+                base = m.group(1)
+                suff = m.group(2)
+                yield s[: m.start()] + base + s[m.end() :]
+                yield s[: m.start()] + base + suff + s[m.end() :]
+            # y(ies)
+            for m in re.finditer(r"([a-z]+y)\(ies\)", s):
+                base_y = m.group(1)
+                plural = base_y[:-1] + "ies"
+                yield s[: m.start()] + base_y + s[m.end() :]
+                yield s[: m.start()] + plural + s[m.end() :]
+
+        for cand in _optional_suffix_variants(term):
+            out.append(normalize_spaces(cand))
+
+        # Remove optional-suffix parentheses before general parentheses processing,
+        # so we don't emit oddities like "tube s" or a standalone "s".
+        term_for_parens = term
+        term_for_parens = re.sub(r"([a-z]+)\((s|es)\)", r"\1", term_for_parens)
+        term_for_parens = re.sub(r"([a-z]+y)\(ies\)", r"\1", term_for_parens)
+
+        matches = list(re.finditer(r"\(([^()]*)\)", term_for_parens))
+        if not matches:
+            return out
+
+        # Variant: remove all '(...)' segments completely.
+        without = normalize_spaces(re.sub(r"\([^()]*\)", " ", term_for_parens))
         if without:
-                out.append(without)
-        if only:
-                out.append(only)
+            out.append(without)
+
+        # Variant: remove parentheses but keep their content inline.
+        inlined_all = normalize_spaces(re.sub(r"\(([^()]*)\)", r" \1 ", term_for_parens))
+        if inlined_all:
+            out.append(inlined_all)
+
+        # Variant: if there are multiple groups, emit one variant per group
+        # where only that group's content is kept inline.
+        if len(matches) > 1:
+            for keep_i, keep_m in enumerate(matches):
+                parts: List[str] = []
+                prev = 0
+                for j, m in enumerate(matches):
+                    parts.append(term_for_parens[prev : m.start()])
+                    if j == keep_i:
+                        content = (m.group(1) or "").strip()
+                        parts.append(f" {content} " if content else " ")
+                    else:
+                        parts.append(" ")
+                    prev = m.end()
+                parts.append(term_for_parens[prev:])
+                one = normalize_spaces("".join(parts))
+                if one:
+                    out.append(one)
+
+        # Variant(s): just the parenthetical content.
+        contents = [(m.group(1) or "").strip() for m in matches]
+        for c in contents:
+            if c:
+                out.append(c)
+        joined = normalize_spaces(" ".join(c for c in contents if c))
+        if joined:
+            out.append(joined)
+
         return out
 
 
@@ -154,12 +210,41 @@ def _rule_unspecified_suffix_to_prefix(term: str) -> Iterable[str]:
         stem = stem[:-1].rstrip()
     if not stem:
         return []
+    # Avoid awkward single-word outputs like "unspecified anthrax".
+    # Keep this rule focused on multi-token phrases.
+    if len(stem.split()) < 2:
+        return []
     return [f"unspecified {stem}"]
+
+
+def _rule_expand_ckd_stage_range(term: str) -> Iterable[str]:
+        """Expand stage ranges like 'stage 1 through stage 4' into individual stages.
+
+        Example:
+            '... with stage 1 through stage 4 chronic kidney disease ...'
+        becomes:
+            '... with stage 1 chronic kidney disease ...', etc.
+        """
+
+        rx = re.compile(
+                r"\bstage\s+(?P<a>[1-4])\s+(?:through|thru)\s+stage\s+(?P<b>[1-4])\b"
+        )
+        m = rx.search(term)
+        if not m:
+                return []
+        a = int(m.group("a"))
+        b = int(m.group("b"))
+        lo, hi = (a, b) if a <= b else (b, a)
+        out: List[str] = []
+        for stage in range(lo, hi + 1):
+                out.append(rx.sub(f"stage {stage}", term, count=1))
+        return out
 
 
 # Add/edit rules here.
 ENRICHMENT_RULES: Sequence[EnrichmentRule] = (
     EnrichmentRule("P1", "Parentheses split", _rule_parentheses_split),
+    EnrichmentRule("D1", "Expand stage 1-4 ranges", _rule_expand_ckd_stage_range),
     EnrichmentRule("A1", "Replace hyphens with spaces", _rule_hyphen_to_space),
     EnrichmentRule("A2", "Remove hyphens", _rule_hyphen_remove),
     EnrichmentRule("A3", "Remove apostrophes", _rule_remove_apostrophes),
@@ -184,6 +269,7 @@ ENRICHMENT_RULES: Sequence[EnrichmentRule] = (
 RULE_DESCRIPTIONS: Dict[str, str] = {
     # Keep one canonical description per rule id for reporting.
     "P1": "Parentheses split: original / no-parens / parens-only",
+    "D1": "Expand 'stage 1 through stage 4' -> stage 1/2/3/4",
     "A1": "Replace hyphens with spaces",
     "A2": "Remove hyphens",
     "A3": "Remove apostrophes",
