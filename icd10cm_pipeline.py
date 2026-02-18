@@ -137,6 +137,77 @@ def iter_rows(path: Path) -> Iterator[IcdRow]:
                 yield row
 
 
+def _load_umls_allowed_vocabularies(umls_sources_path: Path) -> Set[str]:
+    """Return allowed UMLS source vocabularies (English only)."""
+
+    allowed: Set[str] = set()
+    with umls_sources_path.open("r", newline="", encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            lang = (row.get("Language") or "").strip().lower()
+            if lang != "en":
+                continue
+            vocab = (
+                row.get("Source Vocabulary")
+                or row.get("Source Name")
+                or row.get("Source")
+                or ""
+            ).strip()
+            if vocab:
+                allowed.add(vocab)
+    return allowed
+
+
+def _load_umls_atoms_mapping(
+    umls_atoms_path: Path,
+    *,
+    allowed_vocabularies: Set[str],
+) -> Tuple[dict[str, List[Tuple[str, str]]], Counter]:
+    """Load UMLS atoms into a mapping: query_term -> list of (term_string, vocab).
+
+    All keys/terms are normalized to lowercase with collapsed spaces.
+    Returns the mapping and a Counter of rows kept per vocabulary.
+    """
+
+    mapping: dict[str, dict[str, Set[str]]] = {}
+    kept_by_vocab: Counter = Counter()
+
+    with umls_atoms_path.open("r", newline="", encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            vocab = (row.get("Source Vocabulary") or row.get("Source") or "").strip()
+            if not vocab or vocab not in allowed_vocabularies:
+                continue
+
+            query_term = _normalize_spaces((row.get("Query Term") or "").strip().lower())
+            term_string = _normalize_spaces((row.get("Term String") or "").strip().lower())
+            if not query_term or not term_string:
+                continue
+
+            by_vocab = mapping.get(query_term)
+            if by_vocab is None:
+                by_vocab = {}
+                mapping[query_term] = by_vocab
+            s = by_vocab.get(vocab)
+            if s is None:
+                s = set()
+                by_vocab[vocab] = s
+            if term_string in s:
+                continue
+            s.add(term_string)
+            kept_by_vocab[vocab] += 1
+
+    flattened: dict[str, List[Tuple[str, str]]] = {}
+    for qt, by_vocab in mapping.items():
+        out: List[Tuple[str, str]] = []
+        for vocab, strings in by_vocab.items():
+            for s in strings:
+                out.append((s, vocab))
+        flattened[qt] = out
+
+    return flattened, kept_by_vocab
+
+
 def emit_rows(
     icd_row: IcdRow,
     *,
@@ -232,6 +303,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Disable per-rule enrichment report printing",
     )
     parser.add_argument(
+        "--no-term-txt",
+        action="store_true",
+        help="Disable writing a terms-only .txt file (one term per line)",
+    )
+    parser.add_argument(
+        "--term-txt-output",
+        default=None,
+        help=(
+            "Path for the terms-only .txt output. Default: derive from --output by replacing .csv with .terms.txt"
+        ),
+    )
+
+    parser.add_argument(
+        "--no-umls",
+        action="store_true",
+        help="Disable UMLS atoms integration",
+    )
+    parser.add_argument(
+        "--umls-atoms",
+        default="umls_atoms.csv",
+        help="Path to umls_atoms.csv (default: umls_atoms.csv)",
+    )
+    parser.add_argument(
+        "--umls-sources",
+        default="umls_sources.csv",
+        help="Path to umls_sources.csv (default: umls_sources.csv)",
+    )
+    parser.add_argument(
         "--no-unspecified-review",
         action="store_true",
         help="Disable generating a review CSV for single-word ', unspecified' terms",
@@ -250,9 +349,39 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     input_path = Path(args.input)
     output_path = Path(args.output)
 
+    term_txt_path: Optional[Path] = None
+    if not args.no_term_txt:
+        if args.term_txt_output:
+            term_txt_path = Path(str(args.term_txt_output))
+        else:
+            # Default next to the CSV output.
+            if output_path.suffix.lower() == ".csv":
+                term_txt_path = output_path.with_suffix(".terms.txt")
+            else:
+                term_txt_path = Path(str(output_path) + ".terms.txt")
+
     if not input_path.exists():
         print(f"ERROR: input not found: {input_path}", file=sys.stderr)
         return 2
+
+    umls_map: Optional[dict[str, List[Tuple[str, str]]]] = None
+    umls_kept_by_vocab: Counter = Counter()
+    if not args.no_umls:
+        umls_atoms_path = Path(str(args.umls_atoms))
+        umls_sources_path = Path(str(args.umls_sources))
+        if umls_atoms_path.exists() and umls_sources_path.exists():
+            allowed = _load_umls_allowed_vocabularies(umls_sources_path)
+            if allowed:
+                umls_map, umls_kept_by_vocab = _load_umls_atoms_mapping(
+                    umls_atoms_path, allowed_vocabularies=allowed
+                )
+                print(
+                    f"Loaded UMLS atoms: {sum(umls_kept_by_vocab.values())} rows kept across {len(umls_kept_by_vocab)} vocabularies"
+                )
+            else:
+                print("UMLS integration: no English vocabularies found in umls_sources.csv; skipping")
+        else:
+            print("UMLS integration: umls_atoms.csv/umls_sources.csv not found; skipping")
 
     counts = Counter()
     parsed_rows = 0
@@ -270,6 +399,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Final safeguard: de-dupe across the entire output file.
     # Keyed by (code, term) and keeps the first provenance encountered.
     global_seen: Set[Tuple[str, str]] = set()
+
+    # Terms-only output: de-dupe by term (not by code).
+    term_seen: Set[str] = set()
+    term_list: List[str] = []
+
+    umls_rows_written = 0
+    umls_matches = 0
+    umls_written_by_vocab: Counter = Counter()
 
     def add_unspecified_review(code: str, term: str, source: str) -> None:
         t = _normalize_spaces((term or "").strip().lower())
@@ -319,6 +456,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 counts[ty] += 1
                 written_rows += 1
 
+                if term_txt_path is not None and term not in term_seen:
+                    term_seen.add(term)
+                    term_list.append(term)
+
+                # UMLS integration: if this term matches a filtered UMLS Query Term,
+                # add the UMLS Term String as additional variants.
+                if umls_map is not None:
+                    umls_items = umls_map.get(term)
+                    if umls_items:
+                        umls_matches += 1
+                        for umls_term, vocab in umls_items:
+                            umls_key = (row.code, umls_term)
+                            if umls_key in global_seen:
+                                continue
+                            global_seen.add(umls_key)
+                            writer.writerow([row.code, umls_term, f"umls:{vocab}"])
+                            counts[f"umls:{vocab}"] += 1
+                            written_rows += 1
+                            umls_rows_written += 1
+                            umls_written_by_vocab[vocab] += 1
+                            if term_txt_path is not None and umls_term not in term_seen:
+                                term_seen.add(umls_term)
+                                term_list.append(umls_term)
+
     print(f"Parsed ICD rows: {parsed_rows}")
     if args.leaf_only:
         print("Filter: leaf-only (FLAG == 1)")
@@ -359,6 +520,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"\nReview file written: {review_out} (rows: {len(review_map)})")
         else:
             print("\nNo single-word ', unspecified' review cases found.")
+
+    if term_txt_path is not None:
+        with term_txt_path.open("w", encoding="utf-8") as tf:
+            for t in term_list:
+                tf.write(t)
+                tf.write("\n")
+        print(f"\nTerms-only file written: {term_txt_path} (unique terms: {len(term_list)})")
+
+    if umls_map is not None:
+        print(
+            f"\nUMLS integration: added_rows={umls_rows_written} matched_base_rows={umls_matches} "
+            f"unique_query_terms_loaded={len(umls_map)}"
+        )
+        for vocab, n in umls_written_by_vocab.most_common():
+            print(f"  umls:{vocab}: {n}")
 
     return 0
 

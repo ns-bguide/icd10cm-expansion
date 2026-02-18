@@ -69,6 +69,12 @@ Common flags:
 - `--no-enriched`: disable enrichment generation
 - `--enriched-max-per-term N`: cap enrichment fanout per canonical term
 
+UMLS integration:
+
+- `--umls-atoms PATH` (default: `umls_atoms.csv`)
+- `--umls-sources PATH` (default: `umls_sources.csv`)
+- `--no-umls`: disable UMLS integration
+
 Example (official terms only, no enrichment):
 
 ```powershell
@@ -187,6 +193,47 @@ There are two places to look:
 
 - Row counts by `Type`
 - (Optional) the per-rule enrichment report (`terms_affected` and `variants_added`)
+
+When UMLS integration is enabled (and both files exist), the script prints an extra summary:
+
+- `UMLS integration: added_rows=...` (how many rows were added)
+- a breakdown by `Type=umls:<SourceVocabulary>`
+
+## UMLS integration
+
+If `umls_atoms.csv` and `umls_sources.csv` are present, the pipeline can enrich terms using UMLS atoms.
+
+1) **Filtering**
+
+- `umls_sources.csv` is used to select allowed vocabularies where `Language == en`.
+- Only atoms whose `Source Vocabulary` is in that allowed set are considered.
+
+2) **Integration**
+
+If a filtered atom's `Query Term` matches a pipeline `Term`, then the atom's `Term String` is emitted as an additional row:
+
+- `ICD10CMCode`: the matching pipeline row's code
+- `Term`: the UMLS `Term String` (lowercased)
+- `Type`: `umls:<Source Vocabulary>`
+
+3) **Terms-only file (one term per line)**
+
+By default, the pipeline also writes a terms-only text file next to your CSV:
+
+- If `--output` is `icd10cm_terms_2026.csv`, the terms file is `icd10cm_terms_2026.terms.txt`
+- Contains one **unique** term per line (lowercased)
+
+Disable it with:
+
+```powershell
+python .\icd10cm_pipeline.py --no-term-txt
+```
+
+Or choose a custom path:
+
+```powershell
+python .\icd10cm_pipeline.py --term-txt-output .\terms.txt
+```
 
 3) **Review file (single-word ', unspecified')**
 
