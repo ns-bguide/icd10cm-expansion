@@ -25,6 +25,9 @@ official_only.csv
 # Review / diagnostic outputs
 *_review*.csv
 
+# UMLS report
+umls_integration_report.csv
+
 # Ad-hoc / test outputs
 *_test*.csv
 

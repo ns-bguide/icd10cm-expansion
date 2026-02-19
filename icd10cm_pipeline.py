@@ -294,8 +294,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--enriched-max-per-term",
         type=int,
-        default=25,
-        help="Max variants per canonical term (default: 25)",
+        default=0,
+        help="Max variants per canonical term. Use 0 for unlimited (default: 0)",
     )
     parser.add_argument(
         "--no-rule-report",
@@ -321,6 +321,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Disable UMLS atoms integration",
     )
     parser.add_argument(
+        "--no-umls-report",
+        action="store_true",
+        help="Disable writing the UMLS integration report CSV",
+    )
+    parser.add_argument(
+        "--umls-report-output",
+        default="umls_integration_report.csv",
+        help="Path for the UMLS integration report CSV (default: umls_integration_report.csv)",
+    )
+    parser.add_argument(
         "--umls-atoms",
         default="umls_atoms.csv",
         help="Path to umls_atoms.csv (default: umls_atoms.csv)",
@@ -329,6 +339,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--umls-sources",
         default="umls_sources.csv",
         help="Path to umls_sources.csv (default: umls_sources.csv)",
+    )
+    parser.add_argument(
+        "--no-umls-derivations",
+        action="store_true",
+        help="Disable applying derivation/enrichment rules to UMLS-added terms",
+    )
+    parser.add_argument(
+        "--umls-enriched-max-per-term",
+        type=int,
+        default=0,
+        help="Max derivation variants per UMLS term. Use 0 for unlimited (default: 0)",
     )
     parser.add_argument(
         "--no-unspecified-review",
@@ -366,6 +387,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     umls_map: Optional[dict[str, List[Tuple[str, str]]]] = None
     umls_kept_by_vocab: Counter = Counter()
+    umls_report_path: Optional[Path] = None
     if not args.no_umls:
         umls_atoms_path = Path(str(args.umls_atoms))
         umls_sources_path = Path(str(args.umls_sources))
@@ -375,8 +397,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 umls_map, umls_kept_by_vocab = _load_umls_atoms_mapping(
                     umls_atoms_path, allowed_vocabularies=allowed
                 )
+                umls_report_path = Path(str(args.umls_report_output)) if not args.no_umls_report else None
                 print(
-                    f"Loaded UMLS atoms: {sum(umls_kept_by_vocab.values())} rows kept across {len(umls_kept_by_vocab)} vocabularies"
+                    f"Loaded UMLS atoms: kept_rows={sum(umls_kept_by_vocab.values())} "
+                    f"vocabularies={len(umls_kept_by_vocab)} query_terms={len(umls_map)}"
                 )
             else:
                 print("UMLS integration: no English vocabularies found in umls_sources.csv; skipping")
@@ -407,6 +431,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     umls_rows_written = 0
     umls_matches = 0
     umls_written_by_vocab: Counter = Counter()
+    umls_derived_rows_written = 0
 
     def add_unspecified_review(code: str, term: str, source: str) -> None:
         t = _normalize_spaces((term or "").strip().lower())
@@ -480,12 +505,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                 term_seen.add(umls_term)
                                 term_list.append(umls_term)
 
+                            # Apply derivation/enrichment rules to UMLS-added terms.
+                            if (not args.no_enriched) and (not args.no_umls_derivations):
+                                umls_canon = canonicalize(umls_term)
+                                for v2, rule_id in enrich(
+                                    umls_canon,
+                                    max_variants=int(args.umls_enriched_max_per_term),
+                                ):
+                                    dkey = (row.code, v2)
+                                    if dkey in global_seen:
+                                        continue
+                                    global_seen.add(dkey)
+                                    derived_type = f"umls:{vocab}:{rule_id}"
+                                    writer.writerow([row.code, v2, derived_type])
+                                    counts[derived_type] += 1
+                                    written_rows += 1
+                                    umls_derived_rows_written += 1
+                                    if term_txt_path is not None and v2 not in term_seen:
+                                        term_seen.add(v2)
+                                        term_list.append(v2)
+
     print(f"Parsed ICD rows: {parsed_rows}")
     if args.leaf_only:
         print("Filter: leaf-only (FLAG == 1)")
     print(f"Output rows written: {written_rows}")
-    for ty, n in counts.most_common():
-        print(f"  {ty}: {n}")
+
+    # Keep console output minimal when UMLS is enabled.
+    if umls_map is not None:
+        official_n = int(counts.get("official", 0))
+        official_abbr_n = int(counts.get("official+abbr", 0))
+        enriched_total = sum(n for ty, n in counts.items() if str(ty).startswith("enriched:"))
+        umls_total = sum(n for ty, n in counts.items() if str(ty).startswith("umls:"))
+        canonical_total = sum(n for ty, n in counts.items() if str(ty).startswith("canonical:"))
+        print(f"  official: {official_n}")
+        print(f"  official+abbr: {official_abbr_n}")
+        if canonical_total:
+            print(f"  canonical:*: {canonical_total}")
+        print(f"  enriched:*: {enriched_total}")
+        print(f"  umls:*: {umls_total}")
+    else:
+        for ty, n in counts.most_common():
+            print(f"  {ty}: {n}")
 
     if enrichment_stats is not None and not args.no_rule_report:
         print("\nEnrichment rule impact (canonical terms only):")
@@ -530,11 +590,55 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if umls_map is not None:
         print(
-            f"\nUMLS integration: added_rows={umls_rows_written} matched_base_rows={umls_matches} "
-            f"unique_query_terms_loaded={len(umls_map)}"
+            f"\nUMLS integration: added_rows={umls_rows_written} derived_rows={umls_derived_rows_written} "
+            f"matched_base_rows={umls_matches} unique_query_terms_loaded={len(umls_map)}"
         )
-        for vocab, n in umls_written_by_vocab.most_common():
-            print(f"  umls:{vocab}: {n}")
+
+        if umls_report_path is not None:
+            with umls_report_path.open("w", newline="", encoding="utf-8") as rf:
+                rw = csv.writer(rf, quoting=csv.QUOTE_ALL)
+                rw.writerow(
+                    [
+                        "Vocabulary",
+                        "AtomsKept",
+                        "RowsAdded",
+                        "TotalQueryTermsLoaded",
+                        "MatchedBaseRows",
+                        "TotalRowsAdded",
+                        "TotalDerivedRowsAdded",
+                    ]
+                )
+
+                total_atoms = int(sum(umls_kept_by_vocab.values()))
+                total_added = int(umls_rows_written)
+                total_derived = int(umls_derived_rows_written)
+                rw.writerow(
+                    [
+                        "__TOTAL__",
+                        total_atoms,
+                        total_added,
+                        len(umls_map),
+                        umls_matches,
+                        total_added,
+                        total_derived,
+                    ]
+                )
+
+                # Per-vocabulary rows (sorted by RowsAdded desc).
+                vocabs = set(umls_kept_by_vocab.keys()) | set(umls_written_by_vocab.keys())
+                for vocab in sorted(vocabs, key=lambda v: int(umls_written_by_vocab.get(v, 0)), reverse=True):
+                    rw.writerow(
+                        [
+                            vocab,
+                            int(umls_kept_by_vocab.get(vocab, 0)),
+                            int(umls_written_by_vocab.get(vocab, 0)),
+                            "",
+                            "",
+                            "",
+                            "",
+                        ]
+                    )
+            print(f"UMLS report written: {umls_report_path}")
 
     return 0
 

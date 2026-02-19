@@ -32,6 +32,8 @@ CSV columns:
 - `official+abbr` (short description; included only if different from official)
 - `canonical:official`, `canonical:official+abbr` (canonicalized variants)
 - `enriched:<ruleId>` (additional variants created by rules; e.g. `enriched:A1`)
+- `umls:<vocabulary>` (direct UMLS atom term strings; e.g. `umls:SNOMEDCT_US`)
+- `umls:<vocabulary>:<ruleId>` (rule-derived variants generated from a UMLS term; e.g. `umls:SNOMEDCT_US:C1`)
 
 **Casing:** all emitted `Term` values are lowercased. This makes the final output
 case-insensitive by construction.
@@ -54,7 +56,7 @@ python -m venv .venv
 2) Run the pipeline:
 
 ```powershell
-python .\icd10cm_pipeline.py --input .\icd10cm_order_2026.txt --output .\icd10cm_terms_2026.csv --leaf-only --include-official-abbr --enriched-max-per-term 10
+python .\icd10cm_pipeline.py --input .\icd10cm_order_2026.txt --output .\icd10cm_terms_2026.csv --leaf-only --include-official-abbr
 ```
 
 The script prints a summary with row counts by `Type`.
@@ -67,13 +69,17 @@ Common flags:
 - `--include-official-abbr`: include the short description column as `official+abbr`
 - `--no-canonical`: disable canonical generation
 - `--no-enriched`: disable enrichment generation
-- `--enriched-max-per-term N`: cap enrichment fanout per canonical term
+- `--enriched-max-per-term N`: cap enrichment fanout per canonical term (`0` = unlimited; default)
 
 UMLS integration:
 
 - `--umls-atoms PATH` (default: `umls_atoms.csv`)
 - `--umls-sources PATH` (default: `umls_sources.csv`)
 - `--no-umls`: disable UMLS integration
+- `--umls-report-output PATH` (default: `umls_integration_report.csv`)
+- `--no-umls-report`: disable writing the UMLS report CSV
+- `--no-umls-derivations`: disable applying derivation rules to UMLS-added terms
+- `--umls-enriched-max-per-term N`: cap derivations per UMLS term (`0` = unlimited; default)
 
 Example (official terms only, no enrichment):
 
@@ -109,7 +115,7 @@ Each rule is an `EnrichmentRule(rule_id, description, apply_fn)` where:
 Guidelines:
 - Assume the input term is already canonical (lowercased, trimmed).
 - Generate only meaningful variants.
-- Avoid unbounded explosions: use `max_variants` and keep rules conservative.
+- Rules should still avoid runaway explosions, but by default the pipeline does not cap fanout (set `--enriched-max-per-term` / `--umls-enriched-max-per-term` if you want a limit).
 - Use a stable rule id so you can trace provenance in the output `Type`.
 
 ### Existing rules
@@ -197,7 +203,9 @@ There are two places to look:
 When UMLS integration is enabled (and both files exist), the script prints an extra summary:
 
 - `UMLS integration: added_rows=...` (how many rows were added)
-- a breakdown by `Type=umls:<SourceVocabulary>`
+- `UMLS report written: ...` (CSV report with per-vocabulary counts)
+
+Console output is kept minimal (UMLS per-vocabulary breakdown is written to the report CSV instead).
 
 ## UMLS integration
 

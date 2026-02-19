@@ -287,7 +287,7 @@ RULE_DESCRIPTIONS: Dict[str, str] = {
 def enrich(
     term: str,
     *,
-    max_variants: int = 50,
+    max_variants: int = 0,
     rules: Sequence[EnrichmentRule] = ENRICHMENT_RULES,
     stats: Optional[EnrichmentStats] = None,
 ) -> List[Tuple[str, str]]:
@@ -303,7 +303,7 @@ def enrich(
 
     def add(new_term: str, rule_id: str) -> bool:
         nonlocal variants
-        if len(variants) >= max_variants:
+        if max_variants > 0 and len(variants) >= max_variants:
             return False
         new_term = normalize_spaces(new_term)
         if not new_term or new_term in seen:
