@@ -1,6 +1,6 @@
 # ICD-10-CM term extraction + enrichment (2026)
 
-Small, dependency-free pipeline to extract ICD-10-CM terms from `icd10cm_order_2026.txt`, generate canonical forms, and generate additional enriched variants via configurable rules.
+Dependency-free pipeline to extract ICD-10-CM terms from `icd10cm_order_2026.txt`, generate canonical forms, generate enriched variants via configurable rules, and (optionally) integrate UMLS atoms when `umls_atoms.csv` + `umls_sources.csv` are present.
 
 ## Input format
 
@@ -35,12 +35,31 @@ CSV columns:
 - `umls:<vocabulary>` (direct UMLS atom term strings; e.g. `umls:SNOMEDCT_US`)
 - `umls:<vocabulary>:<ruleId>` (rule-derived variants generated from a UMLS term; e.g. `umls:SNOMEDCT_US:C1`)
 
+**De-dupe:** the pipeline de-dupes on `(ICD10CMCode, Term)`, keeping the first `Type` encountered for that pair.
+
 **Casing:** all emitted `Term` values are lowercased. This makes the final output
 case-insensitive by construction.
 
 **CSV quoting:** the pipeline writes CSV with consistent quoting (all fields
 wrapped in quotes). This is expected; use a CSV parser (not string-splitting)
 when reading the file.
+
+## Quick start (Linux/macOS)
+
+From this folder:
+
+1) (Optional) Create and activate a venv:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+2) Run the pipeline:
+
+```bash
+python3 icd10cm_pipeline.py --input icd10cm_order_2026.txt --output icd10cm_terms_2026.csv --leaf-only --include-official-abbr
+```
 
 ## Quick start (Windows)
 
@@ -70,6 +89,14 @@ Common flags:
 - `--no-canonical`: disable canonical generation
 - `--no-enriched`: disable enrichment generation
 - `--enriched-max-per-term N`: cap enrichment fanout per canonical term (`0` = unlimited; default)
+- `--no-rule-report`: disable per-rule enrichment impact report
+
+Extra outputs (enabled by default):
+
+- `--no-term-txt`: disable writing a terms-only `.terms.txt` file
+- `--term-txt-output PATH`: choose a custom terms-only output path
+- `--no-unspecified-review`: disable the review CSV for single-word `, unspecified` stems
+- `--unspecified-review-output PATH`: choose a custom review CSV output path
 
 UMLS integration:
 
@@ -216,7 +243,7 @@ If `umls_atoms.csv` and `umls_sources.csv` are present, the pipeline can enrich 
 - `umls_sources.csv` is used to select allowed vocabularies where `Language == en`.
 - Only atoms whose `Source Vocabulary` is in that allowed set are considered.
 
-2) **Integration**
+2) **Integration (direct atoms)**
 
 If a filtered atom's `Query Term` matches a pipeline `Term`, then the atom's `Term String` is emitted as an additional row:
 
@@ -224,7 +251,22 @@ If a filtered atom's `Query Term` matches a pipeline `Term`, then the atom's `Te
 - `Term`: the UMLS `Term String` (lowercased)
 - `Type`: `umls:<Source Vocabulary>`
 
-3) **Terms-only file (one term per line)**
+3) **Derivations from UMLS terms (optional)**
+
+If enrichment is enabled (default) and `--no-umls-derivations` is not set, the pipeline also applies the same enrichment rules to each UMLS-added term and emits derived variants with:
+
+- `Type`: `umls:<Source Vocabulary>:<ruleId>` (example: `umls:SNOMEDCT_US:C1`)
+
+Control fanout with `--umls-enriched-max-per-term` (`0` = unlimited; default).
+
+4) **UMLS report (enabled by default)**
+
+By default the pipeline writes `umls_integration_report.csv` (configurable via `--umls-report-output`). It contains:
+
+- a `__TOTAL__` row (total atoms kept, total rows added, total derived rows added, etc.)
+- per-vocabulary `AtomsKept` and `RowsAdded`
+
+5) **Terms-only file (one term per line)**
 
 By default, the pipeline also writes a terms-only text file next to your CSV:
 
@@ -243,7 +285,7 @@ Or choose a custom path:
 python .\icd10cm_pipeline.py --term-txt-output .\terms.txt
 ```
 
-3) **Review file (single-word ', unspecified')**
+6) **Review file (single-word ', unspecified')**
 
 The pipeline also writes `unspecified_single_word_review.csv` by default. This file lists cases like
 `"anthrax, unspecified"` where the stem is a single word and may need manual decision. If the same
