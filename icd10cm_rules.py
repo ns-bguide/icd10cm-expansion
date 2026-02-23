@@ -18,6 +18,12 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from p1_blacklist import (
+    BAD_P1_PARENS_ONLY_PHRASES,
+    BAD_P1_PARENS_ONLY_TOKENS,
+    P1_SINGLE_TOKEN_ALLOWLIST,
+)
+
 
 WS_RE = re.compile(r"\s+")
 
@@ -180,65 +186,6 @@ def _rule_parentheses_split(term: str) -> Iterable[str]:
                     out.append(one)
 
         # Variant(s): just the parenthetical content.
-        # These can be extremely noisy (e.g. '(disorder)' -> 'disorder'), so we
-        # filter aggressively. We still allow single-token outputs (to keep
-        # acronyms), but blacklist known-bad tokens/phrases.
-        BAD_PARENS_ONLY_PHRASES: Set[str] = {
-            "physical finding",
-            "or disorder",
-            "driver passenger",
-            "separation upper",
-            "morphologic abnormality",
-            "chip fracture",
-            "lab test",
-            "due to",
-            "nonmagnetic old",
-            "focal partial",
-            "on from",
-            "parts of",
-            "part of",
-            "thoracic part",
-            "assisted driver passenger",
-            "qualifier value",
-            "in bed",
-            "in remission",
-            "navigational concept",
-            "acute chronic",
-            "bifurcation replacement",
-            "mechanical lead",
-            "including sutures",
-            "vertebral diagnosis",
-            "mucoid sanguinous serous",
-            "complete partial",
-            "observable entity",
-            "mechanical bypass",
-            "or disorder etiology",
-            "essential progressive",
-            "degenerative inflammatory",
-            "postinflammatory post-traumatic",
-            "complete total",
-            "bullous aphakic",
-            "congestive congestive",
-            "mitotic nondisjunction",
-            "meiotic nondisjunction",
-            "allograft autograft",
-            "or disorder manifestation",
-            "del syndrome",
-            "joint ligament",
-            "parts of unintentional",
-        }
-        BAD_PARENS_ONLY_TOKENS: Set[str] = {
-            "diagnosis",
-            "disorder",
-            "finding",
-            "unintentional",
-            "nonthermal",
-            "nail",
-            "old",
-            "upper",
-            "lead",
-        }
-
         def _allow_parens_only(content: str) -> bool:
             c = normalize_spaces(content).lower()
             if not c:
@@ -246,22 +193,21 @@ def _rule_parentheses_split(term: str) -> Iterable[str]:
             # Placeholder/templated content like "___ mm" is never useful.
             if "_" in c:
                 return False
-            if c in BAD_PARENS_ONLY_PHRASES:
+            if c in BAD_P1_PARENS_ONLY_PHRASES:
                 return False
             tokens = c.split()
             if len(tokens) == 1:
                 t = tokens[0]
-                if t in BAD_PARENS_ONLY_TOKENS:
+                if t in BAD_P1_PARENS_ONLY_TOKENS:
                     return False
-                single_token_allowlist: Set[str] = set()
-                if t in single_token_allowlist:
+                if t in P1_SINGLE_TOKEN_ALLOWLIST:
                     return True
                 if any(ch.isdigit() for ch in t):
                     return True
                 if t.isalpha() and len(t) <= 5:
                     return True
                 return False
-            if all(t in BAD_PARENS_ONLY_TOKENS for t in tokens):
+            if all(t in BAD_P1_PARENS_ONLY_TOKENS for t in tokens):
                 return False
             return True
 
