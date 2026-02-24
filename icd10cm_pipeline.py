@@ -421,8 +421,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     review_suffix = ", unspecified"
 
     # Final safeguard: de-dupe across the entire output file.
-    # Keyed by (code, term) and keeps the first provenance encountered.
-    global_seen: Set[Tuple[str, str]] = set()
+    # Keyed by Term only and keeps the first provenance encountered.
+    # (If the same term appears under multiple ICD10CM codes, only the first
+    #  encountered row is written.)
+    global_term_seen: Set[str] = set()
 
     # Terms-only output: de-dupe by term (not by code).
     term_seen: Set[str] = set()
@@ -473,10 +475,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 enrichment_stats=enrichment_stats,
             )
             for term, ty in emitted:
-                key = (row.code, term)
-                if key in global_seen:
+                if term in global_term_seen:
                     continue
-                global_seen.add(key)
+                global_term_seen.add(term)
                 writer.writerow([row.code, term, ty])
                 counts[ty] += 1
                 written_rows += 1
@@ -492,10 +493,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     if umls_items:
                         umls_matches += 1
                         for umls_term, vocab in umls_items:
-                            umls_key = (row.code, umls_term)
-                            if umls_key in global_seen:
+                            if umls_term in global_term_seen:
                                 continue
-                            global_seen.add(umls_key)
+                            global_term_seen.add(umls_term)
                             writer.writerow([row.code, umls_term, f"umls:{vocab}"])
                             counts[f"umls:{vocab}"] += 1
                             written_rows += 1
@@ -512,10 +512,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                     umls_canon,
                                     max_variants=int(args.umls_enriched_max_per_term),
                                 ):
-                                    dkey = (row.code, v2)
-                                    if dkey in global_seen:
+                                    if v2 in global_term_seen:
                                         continue
-                                    global_seen.add(dkey)
+                                    global_term_seen.add(v2)
                                     derived_type = f"umls:{vocab}:{rule_id}"
                                     writer.writerow([row.code, v2, derived_type])
                                     counts[derived_type] += 1

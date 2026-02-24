@@ -35,7 +35,7 @@ CSV columns:
 - `umls:<vocabulary>` (direct UMLS atom term strings; e.g. `umls:SNOMEDCT_US`)
 - `umls:<vocabulary>:<ruleId>` (rule-derived variants generated from a UMLS term; e.g. `umls:SNOMEDCT_US:C1`)
 
-**De-dupe:** the pipeline de-dupes on `(ICD10CMCode, Term)`, keeping the first `Type` encountered for that pair.
+**De-dupe:** the pipeline de-dupes globally on `Term`, keeping the first row encountered (including its `ICD10CMCode` and `Type`).
 
 **Casing:** all emitted `Term` values are lowercased. This makes the final output
 case-insensitive by construction.
@@ -305,7 +305,6 @@ python .\icd10cm_pipeline.py --no-unspecified-review
 
 ## Troubleshooting
 
-- If output terms look duplicated, remember the script de-dupes terms **per code**, keeping the first provenance encountered.
-- As a final safeguard, the writer also de-dupes across the entire output file on `(ICD10CMCode, Term)`.
+- The output CSV is globally de-duped by `Term`. If you expected the same term to appear under multiple ICD10CM codes, only the first encountered instance will be written.
 - If you expected lots of `canonical:*` rows: when base terms are already canonical after lowercasing, canonical rows collapse into `official` / `official+abbr` and are removed by the per-code de-dupe.
 - If you need a different de-dup policy (e.g. keep all provenances for the same term), that’s an easy tweak.
