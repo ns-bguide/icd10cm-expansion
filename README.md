@@ -298,6 +298,39 @@ Disable it with:
 python .\icd10cm_pipeline.py --no-unspecified-review
 ```
 
+## Experimental: core term extraction
+
+This repo also includes an experimental, **separate** pipeline that extracts a high-level “core term” from each ICD-10-CM/UMLS term and emits core-term variants for more robust matching.
+
+- Script: [core_term_pipeline.py](core_term_pipeline.py)
+- Default output: `core_term_extraction.csv`
+
+The output CSV is a **core-term mapping** with one row per unique `CoreTerm` (globally de-duped by core term). Columns:
+
+- `Origin` (e.g. `icd10cm:A001:official` or `umls:SNOMEDCT_US:term_string`)
+- `OriginTerm` (the original term text)
+- `CoreTerm` (the extracted core term)
+
+Rows where `CoreTerm == OriginTerm` are omitted (identity mappings).
+
+Example (ICD leaf nodes only, include official+abbr):
+
+```bash
+python3 core_term_pipeline.py --leaf-only --include-official-abbr --output core_term_extraction.csv
+```
+
+Example (ICD + UMLS together):
+
+```bash
+python3 core_term_pipeline.py --leaf-only --include-official-abbr --output core_term_extraction.csv
+```
+
+Example (UMLS only, only Term Strings):
+
+```bash
+python3 core_term_pipeline.py --no-icd --umls-fields term --output core_term_extraction.csv
+```
+
 ## Notes / sharing
 
 - Dependencies: none (stdlib only). See [requirements.txt](requirements.txt).
